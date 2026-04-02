@@ -101,7 +101,7 @@ class DedupDB:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS hashes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    phash INTEGER NOT NULL,
+                    phash TEXT NOT NULL,
                     filename TEXT,
                     source TEXT NOT NULL,
                     added_at REAL NOT NULL
@@ -120,7 +120,7 @@ class DedupDB:
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO hashes (phash, filename, source, added_at) VALUES (?, ?, ?, ?)",
-                    (phash, filename, source, time.time()),
+                    (str(phash), filename, source, time.time()),
                 )
 
     def is_duplicate(self, phash: int, threshold: int = HAMMING_THRESHOLD) -> Tuple[bool, Optional[str]]:
@@ -135,7 +135,7 @@ class DedupDB:
                 # Fast path: exact match
                 row = conn.execute(
                     "SELECT filename FROM hashes WHERE phash = ? LIMIT 1",
-                    (phash,),
+                    (str(phash),),
                 ).fetchone()
                 if row:
                     return True, row[0]
@@ -146,7 +146,7 @@ class DedupDB:
                 # Slow path: hamming distance check
                 rows = conn.execute("SELECT phash, filename FROM hashes").fetchall()
                 for stored_hash, filename in rows:
-                    if _hamming_distance(phash, stored_hash) <= threshold:
+                    if _hamming_distance(phash, int(stored_hash)) <= threshold:
                         return True, filename
 
                 return False, None
