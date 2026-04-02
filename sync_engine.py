@@ -411,8 +411,8 @@ class SyncEngine:
         finally:
             with self._lock:
                 self._status.active_uploads -= 1
-            with self._seen_lock:
-                self._seen.discard(str(path))
+            # Don't remove from _seen — prevents re-processing from
+            # duplicate watchdog events (on_created + on_moved + process_existing)
 
     def _move_to_uploaded(self, path: Path) -> Path:
         dest = self._uploaded_dir / path.name
