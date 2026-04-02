@@ -9,11 +9,13 @@ via WiFi FTP, completely automatically.
 import logging
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 import rumps
+from PIL import Image
 
 from config_manager import ensure_dirs, load_config, APP_SUPPORT_DIR, LOG_FILE
 from rclone_manager import (
@@ -256,6 +258,41 @@ class SonyPhotosSyncApp(rumps.App):
             logger.error(f"Poll error: {e}")
             self._status_item.title = f"Error: {e}"
 
+    # --- Upload notification with thumbnail ---
+
+    def _on_photo_uploaded(self, filename, uploaded_path):
+        """Called by SyncEngine when a photo is uploaded. Shows notification with thumbnail."""
+        try:
+            # Create a thumbnail for the notification
+            thumb_path = Path(tempfile.gettempdir()) / "sps_thumb.jpg"
+            with Image.open(uploaded_path) as img:
+                img.thumbnail((200, 200))
+                img.save(str(thumb_path), "JPEG", quality=80)
+
+            # Use osascript for notification with image
+            script = (
+                f'display notification "{filename} synced to Google Photos" '
+                f'with title "Sony Photos Sync" '
+                f'subtitle "📷 Upload Complete"'
+            )
+            subprocess.run(["osascript", "-e", script], capture_output=True)
+
+            # Also use terminal-notifier if available (supports images)
+            tn = "/opt/homebrew/bin/terminal-notifier"
+            if Path(tn).exists():
+                subprocess.run([
+                    tn,
+                    "-title", "Sony Photos Sync",
+                    "-subtitle", "Upload Complete",
+                    "-message", filename,
+                    "-contentImage", str(thumb_path),
+                    "-sound", "default",
+                ], capture_output=True)
+        except Exception as e:
+            # Fallback to simple notification
+            logger.debug(f"Thumbnail notification failed: {e}")
+            rumps.notification("Sony Photos Sync", "Upload Complete", filename)
+
     # --- Engine control ---
 
     def _start_engine(self):
@@ -267,6 +304,7 @@ class SonyPhotosSyncApp(rumps.App):
                 rclone_path=self._rclone_path,
                 rclone_env=rclone_env(),
                 dedup_db=self._dedup_db,
+                on_upload=self._on_photo_uploaded,
             )
             self._engine.start()
             self._toggle_item.set_callback(self._toggle_sync)

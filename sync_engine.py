@@ -145,11 +145,13 @@ class SyncEngine:
 
     def __init__(self, config: dict, rclone_path: str = "rclone",
                  rclone_env: Optional[dict] = None,
-                 dedup_db: Optional[DedupDB] = None):
+                 dedup_db: Optional[DedupDB] = None,
+                 on_upload=None):
         self._config = config
         self._rclone_path = rclone_path
         self._rclone_env = rclone_env
         self._dedup = dedup_db or DedupDB()
+        self._on_upload = on_upload  # callback(filename, uploaded_path)
 
         self._status = SyncStatus()
         self._lock = threading.Lock()
@@ -378,6 +380,11 @@ class SyncEngine:
                     if len(self._status.recent_files) > MAX_RECENT:
                         self._status.recent_files.pop(0)
                     self._status.last_error = None
+                if self._on_upload:
+                    try:
+                        self._on_upload(path.name, dest)
+                    except Exception:
+                        pass
             else:
                 err = result.stderr.strip()[:200]
                 logger.error(f"Upload failed [{path.name}]: {err}")
