@@ -1,0 +1,24 @@
+# Sony Photos Sync Configuration
+# Edit this file at: ~/Library/Application Support/SonyPhotosSync/config.yaml
+
+ftp:
+  host: "0.0.0.0"        # Listen on all interfaces
+  port: 2121              # Non-privileged port (camera must match)
+  username: "sony"
+  password: "photos"
+
+paths:
+  incoming_dir: "~/Pictures/SonyImport/incoming"
+  uploaded_dir: "~/Pictures/SonyImport/uploaded"
+  log_file: "~/Library/Logs/SonyPhotosSync/sync.log"
+
+rclone:
+  remote_name: "gphotos"
+  album: "Sony Alpha"     # Google Photos album name (leave empty to skip)
+
+upload:
+  extensions:
+    - ".jpg"
+    - ".jpeg"
+  settle_time: 3          # Seconds to wait for file to finish writing
+  max_workers: 2          # Concurrent uploads

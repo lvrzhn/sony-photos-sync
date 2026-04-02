@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+dist/
+dist.zip
+dist 2.zip
+dist 3.zip
+*.spec
+*.dmg
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# macOS
+.DS_Store
+*.app
+
+# Bundled rclone binaries (users download their own)
+resources/rclone_arm64/
+resources/rclone_x86_64/
+
+# Config with secrets
+rclone.conf
