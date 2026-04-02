@@ -320,7 +320,7 @@ class SyncEngine:
             return
 
         with self._seen_lock:
-            key = str(path)
+            key = path.name  # Use filename only to catch all path variants
             if key in self._seen:
                 return
             self._seen.add(key)
@@ -415,6 +415,9 @@ class SyncEngine:
             # duplicate watchdog events (on_created + on_moved + process_existing)
 
     def _move_to_uploaded(self, path: Path) -> Path:
+        if not path.exists():
+            # Already moved by another thread
+            return self._uploaded_dir / path.name
         dest = self._uploaded_dir / path.name
         if dest.exists():
             stem, suffix = path.stem, path.suffix
@@ -422,5 +425,8 @@ class SyncEngine:
             while dest.exists():
                 dest = self._uploaded_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
-        path.rename(dest)
+        try:
+            path.rename(dest)
+        except FileNotFoundError:
+            pass  # Already moved
         return dest
