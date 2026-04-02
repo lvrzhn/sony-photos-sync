@@ -345,14 +345,20 @@ class SyncEngine:
                 logger.warning(f"File not stable, skipping: {path.name}")
                 return
 
-            # Dedup check: skip if we've seen this image content before
-            is_dup, match = check_and_record(str(path), self._dedup)
-            if is_dup:
-                logger.info(f"Duplicate skipped: {path.name} (matches {match})")
-                self._move_to_uploaded(path)
-                with self._lock:
-                    self._status.skipped_duplicates += 1
-                return
+            # Dedup check: only check, don't record yet
+            from dedup import _compute_phash
+            phash = _compute_phash(str(path))
+            if phash is not None:
+                is_dup, match = self._dedup.is_duplicate(phash)
+                if is_dup:
+                    logger.info(f"Duplicate skipped: {path.name} (matches {match})")
+                    try:
+                        self._move_to_uploaded(path)
+                    except FileNotFoundError:
+                        pass
+                    with self._lock:
+                        self._status.skipped_duplicates += 1
+                    return
 
             size_mb = path.stat().st_size / (1024 * 1024)
             logger.info(f"Uploading: {path.name} ({size_mb:.1f} MB)")
@@ -370,6 +376,9 @@ class SyncEngine:
             )
 
             if result.returncode == 0:
+                # Record hash only after successful upload
+                if phash is not None:
+                    self._dedup.add_hash(phash, filename=path.name, source="local")
                 dest = self._move_to_uploaded(path)
                 logger.info(f"Done: {path.name} -> {dest.name}")
                 with self._lock:
