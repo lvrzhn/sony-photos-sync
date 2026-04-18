@@ -7,6 +7,7 @@ via WiFi FTP, completely automatically.
 """
 
 import logging
+import os
 import subprocess
 import sys
 import tempfile
@@ -70,7 +71,7 @@ class SonyPhotosSyncApp(rumps.App):
         icon = _icon_path("icon.png")
         super().__init__(
             name="Sony Photos Sync",
-            title="📷 SPS",
+            title="📷",
             icon=None,  # Use text-only title for now (more visible)
             template=True,
             quit_button=None,
@@ -83,6 +84,7 @@ class SonyPhotosSyncApp(rumps.App):
         self._scanner = None
         self._engine = None
         self._started = False
+        self._pending_popups = []
         self._build_menu()
 
     def _lazy_init(self):
@@ -162,6 +164,12 @@ class SonyPhotosSyncApp(rumps.App):
             rumps.MenuItem("Quit", callback=self._quit),
         ]
 
+    # --- Thumbnail popup (fast timer, runs on main thread) ---
+
+    @rumps.timer(1)
+    def _check_popups(self, _):
+        self._show_pending_popups()
+
     # --- Status polling ---
 
     @rumps.timer(5)
@@ -206,7 +214,7 @@ class SonyPhotosSyncApp(rumps.App):
             if status.active_uploads > 0:
                 self.title = f"↑{status.active_uploads}"
             else:
-                self.title = "SPS"
+                self.title = "📷"
 
             # Status line
             if status.state == EngineState.RUNNING:
@@ -261,37 +269,33 @@ class SonyPhotosSyncApp(rumps.App):
     # --- Upload notification with thumbnail ---
 
     def _on_photo_uploaded(self, filename, uploaded_path):
-        """Called by SyncEngine when a photo is uploaded. Shows notification with thumbnail."""
+        """Called by SyncEngine when a photo is uploaded. Queues thumbnail popup."""
+        logger.info(f"Notification callback fired for {filename} at {uploaded_path}")
         try:
-            # Create a thumbnail for the notification
-            thumb_path = Path(tempfile.gettempdir()) / "sps_thumb.jpg"
+            # Create a thumbnail for the popup
+            thumb_path = Path(tempfile.gettempdir()) / f"sps_thumb_{filename}"
             with Image.open(uploaded_path) as img:
                 img.thumbnail((200, 200))
                 img.save(str(thumb_path), "JPEG", quality=80)
+            logger.info(f"Thumbnail created at {thumb_path}")
 
-            # Use osascript for notification with image
-            script = (
-                f'display notification "{filename} synced to Google Photos" '
-                f'with title "Sony Photos Sync" '
-                f'subtitle "📷 Upload Complete"'
-            )
-            subprocess.run(["osascript", "-e", script], capture_output=True)
-
-            # Also use terminal-notifier if available (supports images)
-            tn = "/opt/homebrew/bin/terminal-notifier"
-            if Path(tn).exists():
-                subprocess.run([
-                    tn,
-                    "-title", "Sony Photos Sync",
-                    "-subtitle", "Upload Complete",
-                    "-message", filename,
-                    "-contentImage", str(thumb_path),
-                    "-sound", "default",
-                ], capture_output=True)
+            # Queue for main thread (timer callback will pick it up)
+            self._pending_popups.append((str(thumb_path), filename))
         except Exception as e:
-            # Fallback to simple notification
-            logger.debug(f"Thumbnail notification failed: {e}")
-            rumps.notification("Sony Photos Sync", "Upload Complete", filename)
+            logger.error(f"Notification failed for {filename}: {e}")
+
+    def _show_pending_popups(self):
+        """Show queued thumbnail popups. Called from main thread timer."""
+        if not self._pending_popups:
+            return
+        thumb_path, filename = self._pending_popups.pop(0)
+        try:
+            from thumbnail_popup import ThumbnailPopup
+            status_item = getattr(self, 'nsstatusitem', None)
+            ThumbnailPopup.show(thumb_path, filename, status_item, 3.0)
+            logger.info(f"Thumbnail popup shown for {filename}")
+        except Exception as e:
+            logger.error(f"Popup failed for {filename}: {e}")
 
     # --- Engine control ---
 
@@ -572,7 +576,7 @@ class SonyPhotosSyncApp(rumps.App):
                 "camera to Google Photos over WiFi.\n\n"
                 "Works with A7R V, A7 IV, A1, A9 II, A6700,\n"
                 "and any Sony camera with FTP transfer.\n\n"
-                "github.com/oz/sony-photos-sync"
+                "github.com/lvrzhn/sony-photos-sync"
             ),
         )
 
@@ -587,8 +591,27 @@ def _uid() -> int:
     return os.getuid()
 
 
+def _acquire_instance_lock():
+    """Ensure only one instance runs at a time. Returns lock fd or exits."""
+    import fcntl
+    lock_path = APP_SUPPORT_DIR / "app.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        return fd  # Keep fd alive — lock released when process exits
+    except OSError:
+        print("Sony Photos Sync is already running.", flush=True)
+        sys.exit(0)
+
+
 def main():
+    import os
     import sys
+
+    lock = _acquire_instance_lock()
 
     # PyInstaller bundles need explicit NSApplication activation
     # for the menu bar icon to appear

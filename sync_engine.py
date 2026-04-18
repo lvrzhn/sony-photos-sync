@@ -322,8 +322,10 @@ class SyncEngine:
         with self._seen_lock:
             key = path.name  # Use filename only to catch all path variants
             if key in self._seen:
+                logger.debug(f"Already seen, skipping: {key} (path={path})")
                 return
             self._seen.add(key)
+            logger.info(f"Queued: {key}")
 
         self._pool.submit(self._upload, path)
 
@@ -367,6 +369,8 @@ class SyncEngine:
                 self._rclone_path, "copy",
                 str(path), self._rclone_dest(),
                 "--log-level", "NOTICE",
+                "--tpslimit", "1",
+                "--transfers", "1",
             ]
 
             env = self._rclone_env if self._rclone_env else None
@@ -399,6 +403,12 @@ class SyncEngine:
                 logger.error(f"Upload failed [{path.name}]: {err}")
                 with self._lock:
                     self._status.last_error = err
+                # Quota exceeded — schedule retry later
+                if "Quota exceeded" in result.stderr:
+                    logger.info(f"Quota hit, will retry {path.name} in 30 minutes")
+                    with self._lock:
+                        self._status.last_error = "Upload quota reached — retrying later"
+                    self._schedule_retry(path, delay=1800)
 
         except subprocess.TimeoutExpired:
             logger.error(f"Upload timed out: {path.name}")
@@ -413,6 +423,17 @@ class SyncEngine:
                 self._status.active_uploads -= 1
             # Don't remove from _seen — prevents re-processing from
             # duplicate watchdog events (on_created + on_moved + process_existing)
+
+    def _schedule_retry(self, path: Path, delay: float):
+        """Retry an upload after a delay (e.g. quota reset)."""
+        def _retry():
+            time.sleep(delay)
+            if path.exists():
+                with self._seen_lock:
+                    self._seen.discard(path.name)
+                logger.info(f"Retrying upload: {path.name}")
+                self._submit_upload(path)
+        threading.Thread(target=_retry, daemon=True, name=f"retry-{path.name}").start()
 
     def _move_to_uploaded(self, path: Path) -> Path:
         if not path.exists():
