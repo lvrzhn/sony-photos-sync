@@ -1,9 +1,9 @@
 ---
 layout: default
-title: Sony Photos Sync
+title: Sony Photos Sync by lvrzhn
 ---
 
-# Sony Photos Sync
+# Sony Photos Sync by lvrzhn
 
 Automatically transfer photos from your Sony Alpha camera to Google Photos — completely hands-free.
 
